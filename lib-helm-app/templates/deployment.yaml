@@ -1,0 +1,180 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lib-helm-app.fullname" . }}
+  labels:
+    {{- include "lib-helm-app.labels" . | nindent 4 }}
+    {{- range $key, $val := .Values.commonlabels }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end}}
+    {{- range $key, $val := .Values.deploymentlabels }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end}}
+spec:
+  {{ if .Values.deployment -}}
+  revisionHistoryLimit: {{ if .Values.deployment.revisionHistoryLimit -}} {{ .Values.deployment.revisionHistoryLimit }} {{- else -}} 2 {{- end }}
+  progressDeadlineSeconds: {{ if .Values.deployment.progressDeadlineSeconds -}} {{ .Values.deployment.progressDeadlineSeconds }} {{- else -}} 600 {{- end }}
+  {{ if .Values.deployment.strategy -}}
+  strategy:
+
+    {{ if .Values.deployment.strategy.rollingUpdate -}}
+    rollingUpdate:
+      maxSurge: {{ if .Values.deployment.strategy.rollingUpdate.maxSurge -}} {{ .Values.deployment.strategy.rollingUpdate.maxSurge }} {{- else -}} 25% {{- end }} 
+      maxUnavailable: {{ if .Values.deployment.strategy.rollingUpdate.maxUnavailable -}} {{ .Values.deployment.strategy.rollingUpdate.maxUnavailable }} {{- else -}} 25% {{- end }}
+    type: {{ if .Values.deployment.strategy.type -}} {{ .Values.deployment.strategy.type }} {{- else -}} "RollingUpdate" {{- end }}
+    {{- end }}
+
+  {{- end }}
+  {{- else -}}
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 600
+  {{- end }}
+
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+
+  selector:
+    matchLabels:
+      {{- include "lib-helm-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "lib-helm-app.selectorLabels" . | nindent 8 }}
+        {{- range $key, $val := .Values.commonlabels }}
+        {{ $key }}: {{ $val | quote }}
+        {{- end}}
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | trunc 10}}
+        checksum/secrets: {{ include (print $.Template.BasePath "/sealedsecrets.yaml") . | sha256sum | trunc 10}}
+    spec:
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      serviceAccountName: {{ include "lib-helm-app.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          env:
+          {{- range $key, $val := .Values.configmapToEnv }}
+          - name: {{ $key }}
+            valueFrom:
+              configMapKeyRef:
+                name: {{ include "lib-helm-app.fullname" $ }}
+                key: {{ $key }}
+          {{- end }}
+
+          {{- if .Values.sealedsecrets.enabled -}}
+          {{- range $key, $val := .Values.sealedsecrets.data }}
+          - name: {{ $key }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "lib-helm-app.fullname" $ }}
+                key: {{ $key }}
+          {{- end }}
+          {{- end }}
+
+          {{- if .Values.sealedsecretsToEnv }}
+          {{- if .Values.sealedsecretsToEnv.enabled -}}
+          {{- range $key, $val := .Values.sealedsecretsToEnv.data }}
+          - name: {{ $key }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "lib-helm-app.fullname" $ }}
+                key: {{ $key }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+
+
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ ( lower .Values.image.repository ) }}:{{ ( lower .Values.image.tag ) | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: {{ .Values.image.port.name }}
+              containerPort: {{ .Values.image.port.containerPort }}
+              protocol: {{ .Values.image.port.protocol }}
+          livenessProbe:
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.livenessProbe.successThreshold }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            httpGet:
+              path: {{ .Values.livenessProbe.httpGet.path }}
+              port: {{ .Values.livenessProbe.httpGet.port }}
+          readinessProbe:
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.readinessProbe.successThreshold }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            httpGet:
+              path: {{ .Values.readinessProbe.httpGet.path }}
+              port: {{ .Values.readinessProbe.httpGet.port }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+  
+          {{ if or (.Values.configmapToFileEnabled) (.Values.sealedsecretsToFilesEnabled) -}}
+          volumeMounts:
+            {{- if .Values.configmapToFileEnabled }}{{- range $configmapToFile := .Values.configmapToFile }}
+            - name: {{ $configmapToFile.name }}
+              mountPath: {{ $configmapToFile.path }}/{{ $configmapToFile.nameFile }}
+              subPath: {{ $configmapToFile.nameFile }}
+              readOnly: true
+            {{- end }}{{- end }}
+            {{- if .Values.sealedsecretsToFilesEnabled }}{{- range $sealedsecretsToFiles := .Values.sealedsecretsToFiles }}
+            - name: {{ $sealedsecretsToFiles.name }}
+              mountPath: {{ $sealedsecretsToFiles.mountPath }}/{{ $sealedsecretsToFiles.secretKey }}
+              subPath: {{ $sealedsecretsToFiles.secretKey }}
+              readOnly: true
+            {{- end }}{{- end }}
+          {{ end }}
+
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{ if or (.Values.configmapToFileEnabled) (.Values.sealedsecretsToFilesEnabled) }}
+      volumes:
+      {{- if .Values.configmapToFileEnabled }}
+        {{- range $configmapToFile := .Values.configmapToFile }}
+        - name: {{ $configmapToFile.name }}
+          configMap:
+            name: {{ include "lib-helm-app.fullname" $ }}
+            items:
+            - key: {{ $configmapToFile.nameFile }}
+              path: {{ $configmapToFile.nameFile }}
+        {{- end }}
+      {{- end }}
+
+      {{- if .Values.sealedsecretsToFilesEnabled }}
+        {{- range $sealedsecretsToFile := .Values.sealedsecretsToFiles }}
+        - name: {{ $sealedsecretsToFile.name }}
+          secret:
+            secretName: {{ include "lib-helm-app.fullname" $ }}
+            items:
+            - key: {{ $sealedsecretsToFile.secretKey }}
+              path: {{ $sealedsecretsToFile.secretKey }}
+        {{- end }}
+      {{- end }}
+    {{ end }}

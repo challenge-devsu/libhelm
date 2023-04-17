@@ -1,3 +1,14 @@
 apiVersion: v1
-entries: {}
-generated: "2023-04-16T22:34:00.213498761-03:00"
+entries:
+  lib-helm-app:
+  - apiVersion: v2
+    appVersion: 1.16.0
+    created: "2023-04-16T22:35:30.053413541-03:00"
+    description: A Helm chart for Kubernetes
+    digest: 9d727742f7ed39b13da65a7b6733c2fde93cc29453aee100f690f68ecd810b37
+    name: lib-helm-app
+    type: application
+    urls:
+    - https://challenge-devsu.github.io/libhelm/lib-helm-app-0.1.0.tgz
+    version: 0.1.0
+generated: "2023-04-16T22:35:30.052863355-03:00"
